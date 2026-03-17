@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-card: #1a1a2e;
+  --border: #2a2a3e;
+  --text-primary: #e0e0e0;
+  --text-secondary: #8888a0;
+  --accent-green: #00c853;
+  --accent-red: #ff1744;
+  --accent-amber: #ffc107;
+  --accent-blue: #448aff;
+  --accent-purple: #7c4dff;
+  --accent-orange: #ff6d00;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}

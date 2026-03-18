@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ClaudeSignalResponse(BaseModel):
@@ -41,7 +41,43 @@ class Signal(BaseModel):
     news_headlines: list[dict[str, str]] | None = None
     indicators: dict[str, float] | None = None
     signal_metadata: dict[str, float | str | list[str]] | None = None
-    status: str = "open"  # "open" | "won" | "lost" | "stopped" | "expired" | "cancelled"
+    status: str = "open"
     created_at: datetime | None = None
     resolved_at: datetime | None = None
     resolved_price: float | None = None
+
+    @field_validator("direction")
+    @classmethod
+    def validate_direction(cls, v: str) -> str:
+        if v not in ("LONG", "SHORT"):
+            raise ValueError(f"direction must be 'LONG' or 'SHORT', got '{v}'")
+        return v
+
+    @field_validator("strategy")
+    @classmethod
+    def validate_strategy(cls, v: str) -> str:
+        valid = {"news_sentiment", "technical_confluence", "volume_spike"}
+        if v not in valid:
+            raise ValueError(f"strategy must be one of {valid}, got '{v}'")
+        return v
+
+    @field_validator("confidence")
+    @classmethod
+    def validate_confidence(cls, v: float) -> float:
+        if v < 0.0 or v > 1.0:
+            raise ValueError(f"confidence must be 0.0-1.0, got {v}")
+        return v
+
+    @field_validator("entry_price", "target_price", "stop_price")
+    @classmethod
+    def validate_positive_price(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"price must be positive, got {v}")
+        return v
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_timeframe(cls, v: str) -> str:
+        if v not in ("1h", "4h", "1d"):
+            raise ValueError(f"timeframe must be '1h', '4h', or '1d', got '{v}'")
+        return v

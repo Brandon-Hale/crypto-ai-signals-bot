@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import traceback
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -138,8 +139,11 @@ class StrategyScheduler:
             logger.info("Strategy loop completed")
 
         except Exception as e:
-            logger.error(f"Strategy loop error: {e}")
-            await self.redis.set("bot:status", "error")
+            logger.error(f"Strategy loop error: {e}\n{traceback.format_exc()}")
+            try:
+                await self.redis.set("bot:status", "error")
+            except Exception:
+                pass  # Redis itself may have failed
 
     async def hourly_maintenance(self) -> None:
         """Hourly maintenance tasks."""

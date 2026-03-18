@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import type { PerformanceSummary } from "@/lib/types";
 
 export async function GET() {
   const { data, error } = await supabase
@@ -9,8 +8,8 @@ export async function GET() {
     .order("updated_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to fetch performance data" }, { status: 500 });
   }
 
-  return NextResponse.json((data as PerformanceSummary[]) ?? []);
+  return NextResponse.json(data ?? []);
 }

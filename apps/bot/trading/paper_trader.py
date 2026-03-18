@@ -1,5 +1,6 @@
 """Paper trader — simulates trades by logging to Supabase only."""
 
+import math
 from datetime import datetime, timezone
 
 from loguru import logger
@@ -85,12 +86,25 @@ class PaperTrader(BaseTrader):
         size_usd = float(trade_data["size_usd"])
         direction = trade_data["direction"]
 
+        # Validate prices before division
+        if entry_price <= 0 or not math.isfinite(entry_price):
+            logger.error(f"Invalid entry_price={entry_price} for trade {trade_id}")
+            raise ValueError(f"Invalid entry_price: {entry_price}")
+        if exit_price <= 0 or not math.isfinite(exit_price):
+            logger.error(f"Invalid exit_price={exit_price} for trade {trade_id}")
+            raise ValueError(f"Invalid exit_price: {exit_price}")
+
         if direction == "LONG":
             pnl_pct = (exit_price - entry_price) / entry_price
         else:
             pnl_pct = (entry_price - exit_price) / entry_price
 
         pnl_usd = size_usd * pnl_pct
+
+        # Guard against NaN/Inf propagation
+        if not math.isfinite(pnl_usd) or not math.isfinite(pnl_pct):
+            logger.error(f"Calculated NaN/Inf P&L for trade {trade_id}: pnl_usd={pnl_usd}, pnl_pct={pnl_pct}")
+            raise ValueError(f"Invalid P&L calculation")
 
         update = {
             "exit_price": exit_price,

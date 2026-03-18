@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { redis } from "@/lib/redis";
-import type { Signal, PerformanceSummary, EquitySnapshot, BotStatus } from "@/lib/types";
+import type { Signal, PerformanceSummary, EquitySnapshot, BotStatus, SignalWithTrade } from "@/lib/types";
 import { LiveDashboard } from "@/components/LiveDashboard";
 
 async function getBotStatus(): Promise<BotStatus> {
@@ -29,19 +29,27 @@ async function getBotStatus(): Promise<BotStatus> {
   };
 }
 
-async function getRecentSignals(): Promise<(Signal & { pair_symbol: string })[]> {
+async function getRecentSignals(): Promise<SignalWithTrade[]> {
   const { data } = await supabase
     .from("signals")
-    .select("*, pairs(symbol)")
+    .select("*, pairs(symbol), trades(size_usd, pnl_usd, pnl_pct, exit_reason, status)")
     .order("created_at", { ascending: false })
     .limit(20);
 
   if (!data) return [];
 
-  return data.map((row) => ({
-    ...row,
-    pair_symbol: (row.pairs as { symbol: string } | null)?.symbol ?? "Unknown",
-  })) as (Signal & { pair_symbol: string })[];
+  return data.map((row) => {
+    const trade = Array.isArray(row.trades) ? row.trades[0] : row.trades;
+    return {
+      ...row,
+      pair_symbol: (row.pairs as { symbol: string } | null)?.symbol ?? "Unknown",
+      trade_size_usd: trade?.size_usd ?? null,
+      trade_pnl_usd: trade?.pnl_usd ?? null,
+      trade_pnl_pct: trade?.pnl_pct ?? null,
+      trade_exit_reason: trade?.exit_reason ?? null,
+      trade_status: trade?.status ?? null,
+    };
+  }) as SignalWithTrade[];
 }
 
 async function getPerformance(): Promise<PerformanceSummary[]> {

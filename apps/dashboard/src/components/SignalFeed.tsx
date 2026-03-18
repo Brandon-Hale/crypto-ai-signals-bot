@@ -1,10 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Signal } from "@/lib/types";
+import type { Signal, SignalWithTrade } from "@/lib/types";
 import { SignalDetail } from "./SignalDetail";
-
-type SignalWithSymbol = Signal & { pair_symbol?: string };
 
 type FilterStatus = "all" | "open" | "won" | "lost" | "stopped" | "expired";
 
@@ -23,14 +21,14 @@ const strategyTag: Record<string, { label: string; color: string }> = {
   volume_spike: { label: "VOL", color: "text-[var(--accent-orange)]" },
 };
 
-export function SignalFeed({ signals: initialSignals }: { signals: SignalWithSymbol[] }) {
+export function SignalFeed({ signals: initialSignals }: { signals: SignalWithTrade[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterStatus>("all");
-  const [signals, setSignals] = useState<SignalWithSymbol[]>(initialSignals);
+  const [signals, setSignals] = useState<SignalWithTrade[]>(initialSignals);
   const [loading, setLoading] = useState(false);
 
   // Keep "all" in sync with realtime updates from parent
-  const [realtimeSignals, setRealtimeSignals] = useState<SignalWithSymbol[]>(initialSignals);
+  const [realtimeSignals, setRealtimeSignals] = useState<SignalWithTrade[]>(initialSignals);
   useEffect(() => {
     setRealtimeSignals(initialSignals);
     if (activeFilter === "all") {
@@ -48,7 +46,20 @@ export function SignalFeed({ signals: initialSignals }: { signals: SignalWithSym
       const res = await fetch(`/api/signals?status=${status}&limit=50`);
       if (res.ok) {
         const data = await res.json();
-        setSignals(data);
+        // API now returns trade data joined in
+        const mapped = data.map((row: Record<string, unknown>) => {
+          const trade = Array.isArray(row.trades) ? row.trades[0] : row.trades;
+          return {
+            ...row,
+            pair_symbol: row.pair_symbol ?? (row.pairs as { symbol: string } | null)?.symbol ?? "Unknown",
+            trade_size_usd: trade?.size_usd ?? null,
+            trade_pnl_usd: trade?.pnl_usd ?? null,
+            trade_pnl_pct: trade?.pnl_pct ?? null,
+            trade_exit_reason: trade?.exit_reason ?? null,
+            trade_status: trade?.status ?? null,
+          };
+        });
+        setSignals(mapped);
       }
     } catch { /* ignore */ }
     setLoading(false);
@@ -111,6 +122,9 @@ export function SignalFeed({ signals: initialSignals }: { signals: SignalWithSym
             const isLong = signal.direction === "LONG";
             const isExpanded = expandedId === signal.id;
             const age = getRelativeTime(signal.created_at);
+            const hasTrade = signal.trade_size_usd != null;
+            const isClosed = signal.trade_status === "closed";
+            const pnl = signal.trade_pnl_usd;
 
             return (
               <div key={signal.id}>
@@ -167,6 +181,44 @@ export function SignalFeed({ signals: initialSignals }: { signals: SignalWithSym
                       sl <span className="text-[var(--accent-red)]">${formatPrice(signal.stop_price)}</span>
                     </span>
                   </div>
+
+                  {/* Row 4: Trade P&L (only if trade exists) */}
+                  {hasTrade && (
+                    <div className="mt-2 flex items-center gap-3 rounded bg-[var(--bg-primary)] px-2 py-1.5 text-[11px]">
+                      <span className="text-[var(--text-muted)]">
+                        size <span className="text-[var(--text-secondary)]">${signal.trade_size_usd!.toFixed(2)}</span>
+                      </span>
+                      {isClosed && pnl != null && (
+                        <>
+                          <span className="text-[var(--text-muted)]">&rarr;</span>
+                          <span
+                            className={`font-bold ${
+                              pnl >= 0 ? "text-[var(--accent-green)]" : "text-[var(--accent-red)]"
+                            }`}
+                          >
+                            {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
+                          </span>
+                          {signal.trade_pnl_pct != null && (
+                            <span className="text-[var(--text-muted)]">
+                              ({signal.trade_pnl_pct >= 0 ? "+" : ""}{signal.trade_pnl_pct.toFixed(2)}%)
+                            </span>
+                          )}
+                          <span className="text-[var(--text-muted)]">&middot;</span>
+                          <span className="text-[var(--text-muted)]">
+                            out <span className="text-[var(--text-secondary)]">${(signal.trade_size_usd! + pnl).toFixed(2)}</span>
+                          </span>
+                          {signal.trade_exit_reason && (
+                            <span className="text-[var(--text-muted)]">
+                              ({signal.trade_exit_reason.replace("_", " ")})
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {!isClosed && (
+                        <span className="text-[var(--accent-blue)]">open</span>
+                      )}
+                    </div>
+                  )}
                 </button>
                 {isExpanded && <SignalDetail signal={signal} />}
               </div>

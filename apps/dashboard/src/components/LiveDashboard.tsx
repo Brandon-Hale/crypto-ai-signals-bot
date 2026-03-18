@@ -2,16 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
-import type { Signal, PerformanceSummary, EquitySnapshot, BotStatus } from "@/lib/types";
+import type { Signal, SignalWithTrade, PerformanceSummary, EquitySnapshot, BotStatus } from "@/lib/types";
 import { SignalFeed } from "./SignalFeed";
 import { PnlChart } from "./PnlChart";
 import { PerformanceStats } from "./PerformanceStats";
 import { BotControls } from "./BotControls";
 
-type SignalWithSymbol = Signal & { pair_symbol: string };
-
 interface LiveDashboardProps {
-  initialSignals: SignalWithSymbol[];
+  initialSignals: SignalWithTrade[];
   initialPerformance: PerformanceSummary[];
   initialEquity: EquitySnapshot[];
   initialBotStatus: BotStatus;
@@ -27,7 +25,7 @@ export function LiveDashboard({
   initialOpenTrades,
   initialSignalsToday,
 }: LiveDashboardProps) {
-  const [signals, setSignals] = useState<SignalWithSymbol[]>(initialSignals);
+  const [signals, setSignals] = useState<SignalWithTrade[]>(initialSignals);
   const [performance, setPerformance] = useState<PerformanceSummary[]>(initialPerformance);
   const [equity, setEquity] = useState<EquitySnapshot[]>(initialEquity);
   const [openTrades, setOpenTrades] = useState(initialOpenTrades);
@@ -66,8 +64,16 @@ export function LiveDashboard({
             .limit(1);
           const symbol = data?.[0]?.symbol ?? "Unknown";
 
-          const withSymbol: SignalWithSymbol = { ...newSignal, pair_symbol: symbol };
-          setSignals((prev) => [withSymbol, ...prev].slice(0, 20));
+          const withTrade: SignalWithTrade = {
+            ...newSignal,
+            pair_symbol: symbol,
+            trade_size_usd: null,
+            trade_pnl_usd: null,
+            trade_pnl_pct: null,
+            trade_exit_reason: null,
+            trade_status: null,
+          };
+          setSignals((prev) => [withTrade, ...prev].slice(0, 20));
 
           // Update signals today count
           const today = new Date();

@@ -1,6 +1,7 @@
 """Live trader — executes real orders via ccxt with full safety guards."""
 
 import json
+import math
 from datetime import datetime, timezone
 
 from loguru import logger
@@ -85,7 +86,10 @@ class LiveTrader(BaseTrader):
         """Place a live limit order after passing all safety guards."""
         passed, reason = await self._check_live_guards(signal)
         if not passed:
-            logger.warning(f"Live guard failed: {reason}")
+            logger.warning(
+                f"Live guard failed | reason={reason} | pair_id={signal.pair_id} | "
+                f"direction={signal.direction} | confidence={signal.confidence:.2f} | rr={signal.risk_reward:.2f}"
+            )
             raise ValueError(f"Safety guard failed: {reason}")
 
         # Resolve symbol — exchange calls need "BTC/USDT", not a UUID
@@ -101,6 +105,9 @@ class LiveTrader(BaseTrader):
             raise ValueError("Could not fetch current ticker")
 
         current_price = ticker["last"]
+        if not current_price or current_price <= 0 or not math.isfinite(current_price):
+            raise ValueError(f"Invalid current_price from ticker: {current_price}")
+
         slippage = self.settings.bot_live_slippage_tolerance
 
         if signal.direction == "LONG":
@@ -111,6 +118,8 @@ class LiveTrader(BaseTrader):
             side = "sell"
 
         amount = self.settings.bot_live_trade_size / current_price
+        if amount <= 0 or not math.isfinite(amount):
+            raise ValueError(f"Invalid order amount: {amount}")
 
         order = await self.exchange.create_limit_order(
             symbol, side, amount, limit_price
@@ -180,11 +189,19 @@ class LiveTrader(BaseTrader):
         size_usd = float(trade_data["size_usd"])
         direction = trade_data["direction"]
 
+        if entry_price <= 0 or not math.isfinite(entry_price):
+            raise ValueError(f"Invalid entry_price: {entry_price}")
+        if exit_price <= 0 or not math.isfinite(exit_price):
+            raise ValueError(f"Invalid exit_price: {exit_price}")
+
         if direction == "LONG":
             pnl_pct = (exit_price - entry_price) / entry_price
         else:
             pnl_pct = (entry_price - exit_price) / entry_price
         pnl_usd = size_usd * pnl_pct
+
+        if not math.isfinite(pnl_usd):
+            raise ValueError(f"Calculated NaN/Inf P&L: {pnl_usd}")
 
         await self.supabase.update(
             "trades",

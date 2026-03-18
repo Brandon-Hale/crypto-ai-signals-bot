@@ -1,6 +1,7 @@
 """Anthropic Claude client for AI signal generation with rate limiting."""
 
 import json
+import math
 from datetime import datetime, timezone
 
 import anthropic
@@ -13,10 +14,9 @@ from models.signal import ClaudeSignalResponse
 class ClaudeClient:
     """Handles all Claude API interactions for signal generation."""
 
-    MODEL = "claude-sonnet-4-20250514"
-
     def __init__(self) -> None:
         self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self.model = settings.claude_model
         self._hourly_calls: int = 0
         self._daily_calls: int = 0
         self._current_hour: int = datetime.now(timezone.utc).hour
@@ -252,7 +252,7 @@ Respond with this exact JSON schema and nothing else:
 
         try:
             response = await self.client.messages.create(
-                model=self.MODEL,
+                model=self.model,
                 max_tokens=1024,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
@@ -271,15 +271,60 @@ Respond with this exact JSON schema and nothing else:
 
             # Strip markdown code fences if Claude wrapped the JSON
             if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                text = text.rsplit("```", 1)[0]
-                text = text.strip()
+                # Extract content between fences
+                parts = text.split("```")
+                if len(parts) >= 3:
+                    inner = parts[1]
+                    # Remove optional language tag (e.g. "json")
+                    if inner.startswith("json"):
+                        inner = inner[4:]
+                    text = inner.strip()
+                else:
+                    text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                    text = text.rsplit("```", 1)[0]
+                    text = text.strip()
 
             data = json.loads(text)
-            return ClaudeSignalResponse(**data)
+
+            # Validate and clamp critical fields
+            parsed = ClaudeSignalResponse(**data)
+            parsed = self._validate_response(parsed)
+            if parsed is None:
+                return None
+
+            return parsed
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse Claude JSON response: {e}\nRaw: {text!r}")
             return None
         except Exception as e:
             logger.error(f"Claude API error: {e}")
             return None
+
+    @staticmethod
+    def _validate_response(resp: ClaudeSignalResponse) -> ClaudeSignalResponse | None:
+        """Validate and sanitize Claude's response values."""
+        # Direction must be valid
+        if resp.direction not in ("LONG", "SHORT", "NONE"):
+            logger.warning(f"Claude returned invalid direction: {resp.direction}")
+            return None
+
+        # Confidence must be 0-1 and not NaN/Inf
+        if math.isnan(resp.confidence) or math.isinf(resp.confidence):
+            logger.warning(f"Claude returned NaN/Inf confidence: {resp.confidence}")
+            return None
+        resp.confidence = max(0.0, min(1.0, resp.confidence))
+
+        # ATR multipliers must be sane
+        if resp.suggested_stop_atr_mult is not None:
+            if math.isnan(resp.suggested_stop_atr_mult) or resp.suggested_stop_atr_mult <= 0:
+                resp.suggested_stop_atr_mult = None
+            else:
+                resp.suggested_stop_atr_mult = min(resp.suggested_stop_atr_mult, 10.0)
+
+        if resp.suggested_target_atr_mult is not None:
+            if math.isnan(resp.suggested_target_atr_mult) or resp.suggested_target_atr_mult <= 0:
+                resp.suggested_target_atr_mult = None
+            else:
+                resp.suggested_target_atr_mult = min(resp.suggested_target_atr_mult, 20.0)
+
+        return resp

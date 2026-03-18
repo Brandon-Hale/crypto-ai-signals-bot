@@ -1,14 +1,23 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+const VALID_STATUSES = ["open", "won", "lost", "stopped", "expired", "cancelled"];
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const limit = parseInt(searchParams.get("limit") ?? "20", 10);
-  const status = searchParams.get("status"); // e.g. "open", "won", "lost", "stopped", "expired"
+  const limit = Math.max(1, Math.min(100, parseInt(searchParams.get("limit") ?? "20", 10) || 20));
+  const status = searchParams.get("status");
+
+  // Validate status parameter
+  if (status && status !== "all" && !VALID_STATUSES.includes(status)) {
+    return NextResponse.json(
+      { error: `Invalid status. Must be one of: all, ${VALID_STATUSES.join(", ")}` },
+      { status: 400 },
+    );
+  }
 
   let query = supabase
     .from("signals")
-    .select("*, pairs(symbol)")
+    .select("*, pairs(symbol), trades(size_usd, pnl_usd, pnl_pct, exit_reason, status)")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -19,7 +28,7 @@ export async function GET(request: Request) {
   const { data, error } = await query;
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to fetch signals" }, { status: 500 });
   }
 
   // Flatten the joined pair symbol onto each signal

@@ -62,8 +62,12 @@ class ExchangeClient:
         cache_key = f"pair:{symbol}:ohlcv:{timeframe}"
         cached = await self.redis.get(cache_key)
         if cached:
-            data = json.loads(cached)
-            return [OHLCV(**c) for c in data]
+            try:
+                data = json.loads(cached)
+                return [OHLCV(**c) for c in data]
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning(f"Corrupted OHLCV cache for {symbol}: {e}")
+                # Fall through to fetch from exchange
 
         async def _call():
             return await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
@@ -99,7 +103,10 @@ class ExchangeClient:
         cache_key = f"pair:{symbol}:orderbook"
         cached = await self.redis.get(cache_key)
         if cached:
-            return OrderBook(**json.loads(cached))
+            try:
+                return OrderBook(**json.loads(cached))
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning(f"Corrupted order book cache for {symbol}: {e}")
 
         async def _call():
             return await self.exchange.fetch_order_book(symbol, limit=limit)
@@ -122,7 +129,10 @@ class ExchangeClient:
         cache_key = f"pair:{symbol}:recent_trades"
         cached = await self.redis.get(cache_key)
         if cached:
-            return json.loads(cached)
+            try:
+                return json.loads(cached)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"Corrupted trades cache for {symbol}: {e}")
 
         async def _call():
             return await self.exchange.fetch_trades(symbol, limit=limit)

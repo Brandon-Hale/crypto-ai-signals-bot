@@ -84,6 +84,15 @@ export interface EquitySnapshot {
   snapshotted_at: string;
 }
 
+export type SignalWithTrade = Signal & {
+  pair_symbol: string;
+  trade_size_usd: number | null;
+  trade_pnl_usd: number | null;
+  trade_pnl_pct: number | null;
+  trade_exit_reason: string | null;
+  trade_status: string | null;
+};
+
 export interface BotStatus {
   status: "running" | "idle" | "error" | "stopped" | "paused";
   trade_mode: "paper" | "live";

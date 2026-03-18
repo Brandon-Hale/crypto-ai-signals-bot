@@ -1,34 +1,47 @@
 import { supabase } from "@/lib/supabase";
 import { redis } from "@/lib/redis";
-import type { Signal, PerformanceSummary, BotStatus } from "@/lib/types";
-import { SignalFeed } from "@/components/SignalFeed";
-import { PnlChart } from "@/components/PnlChart";
-import { PerformanceStats } from "@/components/PerformanceStats";
+import type { Signal, PerformanceSummary, EquitySnapshot, BotStatus } from "@/lib/types";
+import { LiveDashboard } from "@/components/LiveDashboard";
 
 async function getBotStatus(): Promise<BotStatus> {
-  const [status, tradeMode, lastRun, equity] = await Promise.all([
+  const [status, tradeMode, lastRun, equity, heartbeat] = await Promise.all([
     redis.get<string>("bot:status"),
     redis.get<string>("bot:trade_mode"),
     redis.get<string>("bot:last_run"),
     redis.get<string>("bot:paper:equity"),
+    redis.get<string>("bot:heartbeat"),
   ]);
 
+  let resolvedStatus: BotStatus["status"];
+  if (!heartbeat) {
+    resolvedStatus = "stopped";
+  } else if (status === "paused") {
+    resolvedStatus = "paused";
+  } else {
+    resolvedStatus = (status as BotStatus["status"]) ?? "idle";
+  }
+
   return {
-    status: (status as BotStatus["status"]) ?? "idle",
+    status: resolvedStatus,
     trade_mode: (tradeMode as BotStatus["trade_mode"]) ?? "paper",
     last_run: lastRun,
     paper_equity: equity ? parseFloat(equity) : null,
   };
 }
 
-async function getRecentSignals(): Promise<Signal[]> {
+async function getRecentSignals(): Promise<(Signal & { pair_symbol: string })[]> {
   const { data } = await supabase
     .from("signals")
-    .select("*")
+    .select("*, pairs(symbol)")
     .order("created_at", { ascending: false })
     .limit(20);
 
-  return (data as Signal[]) ?? [];
+  if (!data) return [];
+
+  return data.map((row) => ({
+    ...row,
+    pair_symbol: (row.pairs as { symbol: string } | null)?.symbol ?? "Unknown",
+  })) as (Signal & { pair_symbol: string })[];
 }
 
 async function getPerformance(): Promise<PerformanceSummary[]> {
@@ -36,89 +49,52 @@ async function getPerformance(): Promise<PerformanceSummary[]> {
   return (data as PerformanceSummary[]) ?? [];
 }
 
+async function getEquitySnapshots(): Promise<EquitySnapshot[]> {
+  const { data } = await supabase
+    .from("equity_snapshots")
+    .select("*")
+    .order("snapshotted_at", { ascending: true })
+    .limit(200);
+
+  return (data as EquitySnapshot[]) ?? [];
+}
+
+async function getOpenTradeCount(): Promise<number> {
+  const { count } = await supabase
+    .from("trades")
+    .select("*", { count: "exact", head: true })
+    .eq("status", "open");
+
+  return count ?? 0;
+}
+
+async function getSignalsTodayCount(signals: Signal[]): Promise<number> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  return signals.filter((s) => new Date(s.created_at) >= todayStart).length;
+}
+
 export const revalidate = 30;
 
 export default async function DashboardPage() {
-  const [botStatus, signals, performance] = await Promise.all([
+  const [botStatus, signals, performance, equitySnapshots, openTradeCount] = await Promise.all([
     getBotStatus(),
     getRecentSignals(),
     getPerformance(),
+    getEquitySnapshots(),
+    getOpenTradeCount(),
   ]);
 
-  const totalPnl = performance.reduce((sum, p) => sum + p.total_pnl_usd, 0);
-  const totalTrades = performance.reduce((sum, p) => sum + p.total_trades, 0);
-  const totalWins = performance.reduce((sum, p) => sum + p.winning_trades, 0);
-  const winRate = totalTrades > 0 ? totalWins / totalTrades : 0;
-  const openSignals = signals.filter((s) => s.status === "open").length;
+  const signalsToday = await getSignalsTodayCount(signals);
 
   return (
-    <main className="min-h-screen p-6">
-      {/* Top Stats Strip */}
-      <div className="mb-8 flex flex-wrap items-center gap-4 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
-        <StatusBadge status={botStatus.status} />
-        <ModeBadge mode={botStatus.trade_mode} />
-        {botStatus.last_run && (
-          <Stat label="Last Run" value={new Date(botStatus.last_run).toLocaleTimeString()} />
-        )}
-        <Stat label="Signals Today" value={signals.length.toString()} />
-        <Stat label="Open Trades" value={openSignals.toString()} />
-        <Stat
-          label="Cumulative P&L"
-          value={`$${totalPnl.toFixed(2)}`}
-          color={totalPnl >= 0 ? "var(--accent-green)" : "var(--accent-red)"}
-        />
-        <Stat label="Win Rate" value={`${(winRate * 100).toFixed(1)}%`} />
-      </div>
-
-      {/* Two-column layout */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-3">
-          <SignalFeed signals={signals} />
-        </div>
-        <div className="space-y-6 lg:col-span-2">
-          <PnlChart />
-          <PerformanceStats performance={performance} />
-        </div>
-      </div>
-    </main>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    running: "bg-green-500/20 text-green-400",
-    idle: "bg-gray-500/20 text-gray-400",
-    error: "bg-red-500/20 text-red-400",
-    stopped: "bg-gray-500/20 text-gray-500",
-  };
-
-  return (
-    <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${colors[status] ?? colors.idle}`}>
-      {status}
-    </span>
-  );
-}
-
-function ModeBadge({ mode }: { mode: string }) {
-  const isLive = mode === "live";
-  return (
-    <span
-      className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${
-        isLive ? "animate-pulse bg-amber-500/20 text-amber-400" : "bg-gray-500/20 text-gray-400"
-      }`}
-    >
-      {mode}
-    </span>
-  );
-}
-
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="text-center">
-      <div className="text-xs uppercase text-[var(--text-secondary)]">{label}</div>
-      <div className="text-sm font-bold" style={color ? { color } : undefined}>
-        {value}
-      </div>
-    </div>
+    <LiveDashboard
+      initialSignals={signals}
+      initialPerformance={performance}
+      initialEquity={equitySnapshots}
+      initialBotStatus={botStatus}
+      initialOpenTrades={openTradeCount}
+      initialSignalsToday={signalsToday}
+    />
   );
 }

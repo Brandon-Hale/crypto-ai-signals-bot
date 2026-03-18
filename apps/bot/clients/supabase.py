@@ -34,6 +34,19 @@ class SupabaseClient:
             logger.error(f"Supabase insert to {table} failed: {e}")
             return None
 
+    async def upsert(self, table: str, data: dict, on_conflict: str = "id") -> dict | None:
+        """Upsert a row (insert or update on conflict) and return the record."""
+        try:
+            result = (
+                await self.client.table(table)
+                .upsert(data, on_conflict=on_conflict)
+                .execute()
+            )
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"Supabase upsert to {table} failed: {e}")
+            return None
+
     async def update(self, table: str, id: str, data: dict) -> dict | None:
         """Update a row by ID."""
         try:

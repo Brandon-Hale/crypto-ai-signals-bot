@@ -85,7 +85,7 @@ export interface EquitySnapshot {
 }
 
 export interface BotStatus {
-  status: "running" | "idle" | "error" | "stopped";
+  status: "running" | "idle" | "error" | "stopped" | "paused";
   trade_mode: "paper" | "live";
   last_run: string | null;
   paper_equity: number | null;

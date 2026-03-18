@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Crypto Signal Bot — Dashboard",
-  description: "AI-powered crypto trading signals and paper trading performance",
+  title: "sigbot",
+  description: "AI-powered crypto trading signals",
 };
 
 export default function RootLayout({

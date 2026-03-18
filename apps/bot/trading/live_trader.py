@@ -88,8 +88,15 @@ class LiveTrader(BaseTrader):
             logger.warning(f"Live guard failed: {reason}")
             raise ValueError(f"Safety guard failed: {reason}")
 
+        # Resolve symbol — exchange calls need "BTC/USDT", not a UUID
+        symbol = signal.symbol
+        if not symbol:
+            symbol = await self.redis.hget("pairs:id_to_symbol", signal.pair_id)
+        if not symbol:
+            raise ValueError(f"Could not resolve symbol for pair_id={signal.pair_id}")
+
         # Fetch current price
-        ticker = await self.exchange.fetch_ticker(signal.pair_id)
+        ticker = await self.exchange.fetch_ticker(symbol)
         if not ticker:
             raise ValueError("Could not fetch current ticker")
 
@@ -106,7 +113,7 @@ class LiveTrader(BaseTrader):
         amount = self.settings.bot_live_trade_size / current_price
 
         order = await self.exchange.create_limit_order(
-            signal.pair_id, side, amount, limit_price
+            symbol, side, amount, limit_price
         )
         if not order:
             raise ValueError("Failed to place order on exchange")
@@ -263,7 +270,13 @@ class LiveTrader(BaseTrader):
             if not trade.order_id:
                 continue
 
-            order = await self.exchange.fetch_order(trade.order_id, trade.pair_id)
+            # Resolve pair UUID to exchange symbol
+            symbol = await self.redis.hget("pairs:id_to_symbol", trade.pair_id)
+            if not symbol:
+                logger.warning(f"Could not resolve symbol for pair_id={trade.pair_id}")
+                continue
+
+            order = await self.exchange.fetch_order(trade.order_id, symbol)
             if order and order.get("status") == "closed":
                 fill_price = float(order.get("average", order.get("price", 0)))
                 result = await self.close_trade(

@@ -1,9 +1,7 @@
 """APScheduler job definitions for the strategy loop."""
 
-import asyncio
 import json
 from datetime import datetime, timezone
-import signal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -80,6 +78,22 @@ class StrategyScheduler:
         """Main strategy loop — runs every N minutes."""
         try:
             self.redis.reset_loop_counter()
+
+            # Heartbeat expires after 2x the loop interval — if the bot dies, this key vanishes
+            heartbeat_ttl = self.settings.bot_strategy_interval_minutes * 2 * 60
+            await self.redis.set("bot:heartbeat", "1", ex=heartbeat_ttl)
+
+            # Check for pause/resume command from dashboard
+            command = await self.redis.get("bot:command")
+            if command == "pause":
+                await self.redis.set("bot:status", "paused")
+                logger.info("Bot paused via dashboard — skipping loop")
+                return
+            elif command == "resume":
+                # Clear the command and continue with the loop
+                await self.redis.set("bot:command", "")
+                logger.info("Bot resumed via dashboard")
+
             await self.redis.set("bot:status", "running")
             logger.info("Strategy loop starting")
 
@@ -169,26 +183,55 @@ class StrategyScheduler:
             )
             pairs = usdt_pairs[: self.settings.bot_max_pairs]
 
-            # Cache active pair list
+            # Upsert pairs to Supabase so each gets a UUID
+            persisted_pairs: list[Pair] = []
+            for pair in pairs:
+                row = await self.supabase.upsert(
+                    "pairs",
+                    {
+                        "symbol": pair.symbol,
+                        "base_asset": pair.base_asset,
+                        "quote_asset": pair.quote_asset,
+                        "category": pair.category,
+                        "current_price": float(pair.current_price) if pair.current_price else None,
+                        "price_change_24h": float(pair.price_change_24h) if pair.price_change_24h else None,
+                        "volume_24h": float(pair.volume_24h) if pair.volume_24h else None,
+                        "is_active": True,
+                    },
+                    on_conflict="symbol",
+                )
+                if row:
+                    pair.id = row["id"]
+                    persisted_pairs.append(pair)
+                else:
+                    logger.warning(f"Failed to upsert pair {pair.symbol} — skipping")
+
+            # Cache active pair list and UUID→symbol mapping
             await self.redis.set(
                 "pairs:active",
-                json.dumps([p.symbol for p in pairs]),
+                json.dumps([p.symbol for p in persisted_pairs]),
             )
+            for p in persisted_pairs:
+                if p.id:
+                    await self.redis.hset("pairs:id_to_symbol", p.id, p.symbol)
 
-            return pairs
+            return persisted_pairs
         except Exception as e:
             logger.error(f"Failed to fetch active pairs: {e}")
             return []
 
     async def _update_redis_prices(self, pairs: list[Pair]) -> None:
-        """Write current prices to Redis hash."""
+        """Write current prices to Redis hashes (by symbol and by UUID)."""
         for pair in pairs:
             if pair.current_price is not None:
-                await self.redis.hset("pairs:prices", pair.symbol, str(pair.current_price))
+                price_str = str(pair.current_price)
+                await self.redis.hset("pairs:prices", pair.symbol, price_str)
+                if pair.id:
+                    await self.redis.hset("pairs:prices_by_id", pair.id, price_str)
 
-    async def _snapshot_ohlcv(self, pairs: list[Pair]) -> None:
+    async def _snapshot_ohlcv(self, pairs: list[Pair]) -> None:  # noqa: ARG002
         """Store latest candles in Supabase for charting."""
-        # Implementation: fetch and store latest candles
+        # TODO: fetch and store latest candles
         pass
 
     async def _compute_and_cache_indicators(self, pairs: list[Pair]) -> None:
@@ -209,19 +252,23 @@ class StrategyScheduler:
 
     async def _run_all_strategies(self, pairs: list[Pair]) -> None:
         """Execute all strategies across all pairs."""
+        # Fields that exist on Signal model but not in the signals DB table
+        _exclude_fields = {"id", "created_at", "symbol"}
+
         for pair in pairs:
             for strategy in self.strategies:
                 try:
                     signal = await strategy.evaluate(pair)
                     if signal:
-                        # Ensure pair_id is set
-                        signal.pair_id = signal.pair_id or pair.symbol
+                        # Ensure pair_id and symbol are set
+                        signal.pair_id = signal.pair_id or pair.id
+                        signal.symbol = signal.symbol or pair.symbol
 
-                        # Prepare data for Supabase: exclude id, created_at, and None values only
+                        # Prepare data for Supabase: exclude non-DB fields and None values
                         signal_data = {
                             k: v
                             for k, v in signal.model_dump().items()
-                            if k not in {"id", "created_at"} and v is not None
+                            if k not in _exclude_fields and v is not None
                         }
 
                         result = await self.supabase.insert("signals", signal_data)
@@ -236,14 +283,24 @@ class StrategyScheduler:
                     )
 
     async def _get_current_prices(self) -> dict[str, float]:
-        """Get current prices from Redis."""
-        prices_map = await self.redis.hgetall("pairs:prices")
-        return {symbol: float(price) for symbol, price in prices_map.items()}
+        """Get current prices from Redis, keyed by pair UUID."""
+        prices_map = await self.redis.hgetall("pairs:prices_by_id")
+        return {pair_id: float(price) for pair_id, price in prices_map.items()}
 
     async def _update_equity_snapshot(self) -> None:
         """Write current equity to equity_snapshots table."""
         equity_str = await self.redis.get("bot:paper:equity")
-        equity = float(equity_str) if equity_str else 10000.0
+        if not equity_str:
+            # Backfill from closed trades if Redis has no equity yet
+            closed_trades = await self.supabase.select(
+                "trades", filters={"mode": "paper", "status": "closed"}
+            )
+            total_pnl = sum(float(t.get("pnl_usd", 0)) for t in closed_trades)
+            equity = 10000.0 + total_pnl
+            await self.redis.set("bot:paper:equity", str(round(equity, 2)))
+            logger.info(f"Backfilled paper equity from {len(closed_trades)} closed trades: ${equity:.2f}")
+        else:
+            equity = float(equity_str)
 
         await self.supabase.insert(
             "equity_snapshots",
@@ -255,34 +312,46 @@ class StrategyScheduler:
 
     async def _update_performance_summary(self) -> None:
         """Recalculate win rate, P&L, drawdown per strategy."""
-        for strategy in self.strategies:
-            try:
-                trades = await self.supabase.select(
-                    "trades",
-                    filters={"status": "closed"},
-                )
-                strategy_trades = [
-                    t for t in trades
-                    if t.get("signal_id")  # Filter by strategy via signal
-                ]
+        try:
+            trades = await self.supabase.select(
+                "trades",
+                filters={"status": "closed"},
+            )
+            if not trades:
+                return
 
-                if not strategy_trades:
-                    continue
+            # Build signal_id → strategy mapping so we can attribute trades
+            signals = await self.supabase.select("signals", columns="id,strategy")
+            signal_strategy = {s["id"]: s["strategy"] for s in signals}
 
-                winning = sum(1 for t in strategy_trades if float(t.get("pnl_usd", 0)) > 0)
-                total = len(strategy_trades)
-                total_pnl = sum(float(t.get("pnl_usd", 0)) for t in strategy_trades)
+            for strategy in self.strategies:
+                try:
+                    strategy_trades = [
+                        t for t in trades
+                        if signal_strategy.get(t.get("signal_id")) == strategy.name
+                    ]
 
-                await self.supabase.insert(
-                    "performance_summary",
-                    {
-                        "strategy": strategy.name,
-                        "total_trades": total,
-                        "winning_trades": winning,
-                        "losing_trades": total - winning,
-                        "total_pnl_usd": round(total_pnl, 2),
-                        "win_rate": round(winning / total, 4) if total > 0 else 0,
-                    },
-                )
-            except Exception as e:
-                logger.warning(f"Performance update failed for {strategy.name}: {e}")
+                    if not strategy_trades:
+                        continue
+
+                    winning = sum(1 for t in strategy_trades if float(t.get("pnl_usd", 0)) > 0)
+                    total = len(strategy_trades)
+                    total_pnl = sum(float(t.get("pnl_usd", 0)) for t in strategy_trades)
+
+                    await self.supabase.upsert(
+                        "performance_summary",
+                        {
+                            "strategy": strategy.name,
+                            "timeframe": "all",
+                            "total_trades": total,
+                            "winning_trades": winning,
+                            "losing_trades": total - winning,
+                            "total_pnl_usd": round(total_pnl, 2),
+                            "win_rate": round(winning / total, 4) if total > 0 else 0,
+                        },
+                        on_conflict="strategy,timeframe",
+                    )
+                except Exception as e:
+                    logger.warning(f"Performance update failed for {strategy.name}: {e}")
+        except Exception as e:
+            logger.warning(f"Performance summary fetch failed: {e}")

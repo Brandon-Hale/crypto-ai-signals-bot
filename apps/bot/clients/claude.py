@@ -268,11 +268,17 @@ Respond with this exact JSON schema and nothing else:
                 return None
             text = response.content[0].text
             text = text.strip()
-            logger.debug(f"Raw Claude response: {text}")
+
+            # Strip markdown code fences if Claude wrapped the JSON
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                text = text.rsplit("```", 1)[0]
+                text = text.strip()
+
             data = json.loads(text)
             return ClaudeSignalResponse(**data)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Claude JSON response: {e}")
+            logger.error(f"Failed to parse Claude JSON response: {e}\nRaw: {text!r}")
             return None
         except Exception as e:
             logger.error(f"Claude API error: {e}")

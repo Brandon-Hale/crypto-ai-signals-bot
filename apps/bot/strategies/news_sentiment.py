@@ -24,10 +24,9 @@ class NewsSentimentStrategy(BaseStrategy):
         if not articles:
             return None
 
-        # Check dedup for both directions
-        for direction in ("LONG", "SHORT"):
-            if await self.is_deduped(symbol, direction):
-                logger.debug(f"Dedup hit: {symbol} {direction} {self.name}")
+        # Skip if both directions already deduped
+        if await self.is_deduped(symbol, "LONG") and await self.is_deduped(symbol, "SHORT"):
+            return None
 
         # Fetch market data
         ohlcv = await self.exchange.fetch_ohlcv(symbol, "1h", limit=100)

@@ -2,33 +2,46 @@ import type { Signal } from "@/lib/types";
 
 export function SignalDetail({ signal }: { signal: Signal }) {
   return (
-    <div className="mt-1 rounded-b-lg border border-t-0 border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-sm">
-      <h3 className="mb-2 font-bold text-[var(--text-primary)]">AI Reasoning</h3>
-      <p className="mb-4 whitespace-pre-wrap text-[var(--text-secondary)]">
-        {signal.reasoning}
-      </p>
+    <div className="rounded-b border border-t-0 border-[var(--border-focus)] bg-[var(--bg-card)] px-3 py-3 text-xs">
+      {/* Reasoning */}
+      <div className="mb-3">
+        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+          reasoning
+        </div>
+        <p className="whitespace-pre-wrap leading-relaxed text-[var(--text-secondary)]">
+          {signal.reasoning}
+        </p>
+      </div>
 
+      {/* News headlines */}
       {signal.news_headlines && signal.news_headlines.length > 0 && (
-        <div className="mb-4">
-          <h4 className="mb-1 font-semibold text-[var(--text-primary)]">News Headlines</h4>
-          <ul className="space-y-1 text-xs text-[var(--text-secondary)]">
+        <div className="mb-3">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            headlines
+          </div>
+          <div className="space-y-0.5">
             {signal.news_headlines.map((h, i) => (
-              <li key={i}>
-                [{h.source}] {h.title}
-              </li>
+              <div key={i} className="text-[var(--text-secondary)]">
+                <span className="text-[var(--text-muted)]">[{h.source}]</span> {h.title}
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       )}
 
+      {/* Indicators */}
       {signal.indicators && (
         <div>
-          <h4 className="mb-1 font-semibold text-[var(--text-primary)]">Indicators at Signal Time</h4>
-          <div className="grid grid-cols-3 gap-2 text-xs text-[var(--text-secondary)]">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            indicators
+          </div>
+          <div className="grid grid-cols-4 gap-x-4 gap-y-0.5">
             {Object.entries(signal.indicators).map(([key, val]) => (
-              <div key={key}>
-                <span className="text-[var(--text-primary)]">{key}:</span>{" "}
-                {typeof val === "number" ? val.toFixed(4) : val}
+              <div key={key} className="text-[var(--text-muted)]">
+                {key.replace(/_/g, " ")}{" "}
+                <span className="text-[var(--text-secondary)]">
+                  {typeof val === "number" ? val.toFixed(4) : val}
+                </span>
               </div>
             ))}
           </div>

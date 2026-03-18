@@ -27,6 +27,7 @@ class Signal(BaseModel):
 
     id: str | None = None
     pair_id: str
+    symbol: str | None = None  # e.g. "BTC/USDT" — in-memory only, not persisted to DB
     strategy: str  # "news_sentiment" | "technical_confluence" | "volume_spike"
     direction: str  # "LONG" | "SHORT"
     confidence: float

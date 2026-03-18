@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Paper trading
     bot_paper_trade_size: float = 200.0
     bot_min_confidence: float = 0.65
-    bot_min_rr: float = 1.5
+    bot_min_rr: float = 1.0                     # TEMP: lowered for testing (normal: 1.5)
 
     # Live trading
     bot_live_trade_size: float = 10.0
@@ -42,14 +42,14 @@ class Settings(BaseSettings):
     # Strategy
     bot_max_pairs: int = 30
     bot_strategy_interval_minutes: int = 5
-    bot_default_stop_atr_mult: float = 1.5
-    bot_default_target_atr_mult: float = 2.5
+    bot_default_stop_atr_mult: float = 0.3      # TEMP: tightened for testing (normal: 1.5)
+    bot_default_target_atr_mult: float = 0.5    # TEMP: tightened for testing (normal: 2.5)
     log_level: str = "INFO"
 
     # Cost controls
-    bot_max_claude_calls_per_hour: int = 60      # hard cap on Claude API calls per hour
-    bot_max_claude_calls_per_day: int = 500       # hard cap on Claude API calls per day
-    bot_max_redis_commands_per_loop: int = 500    # circuit breaker per strategy loop
+    bot_max_claude_calls_per_hour: int = 200     # hard cap on Claude API calls per hour
+    bot_max_claude_calls_per_day: int = 2000      # hard cap on Claude API calls per day
+    bot_max_redis_commands_per_loop: int = 1500   # circuit breaker per strategy loop
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -9,7 +9,6 @@ export default async function PairPage({ params }: PairPageProps) {
   const { symbol } = await params;
   const decodedSymbol = decodeURIComponent(symbol);
 
-  // Fetch pair info
   const { data: pairs } = await supabase
     .from("pairs")
     .select("*")
@@ -19,13 +18,12 @@ export default async function PairPage({ params }: PairPageProps) {
   const pair = pairs?.[0];
   if (!pair) {
     return (
-      <main className="p-6">
-        <h1 className="text-xl font-bold">Pair not found: {decodedSymbol}</h1>
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        <p className="text-xs text-[var(--text-muted)]">pair not found: {decodedSymbol}</p>
       </main>
     );
   }
 
-  // Fetch signals and trades for this pair
   const [{ data: signals }, { data: trades }] = await Promise.all([
     supabase
       .from("signals")
@@ -50,82 +48,106 @@ export default async function PairPage({ params }: PairPageProps) {
   const winRate = closedTrades.length > 0 ? wins / closedTrades.length : 0;
 
   return (
-    <main className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">{decodedSymbol}</h1>
-        <div className="mt-2 flex gap-6 text-sm text-[var(--text-secondary)]">
-          <span>Category: {pair.category}</span>
-          <span>Price: ${pair.current_price ?? "—"}</span>
-          <span>24h Vol: ${pair.volume_24h ? Number(pair.volume_24h).toLocaleString() : "—"}</span>
+    <main className="mx-auto max-w-7xl px-4 py-6">
+      {/* Header */}
+      <div className="mb-6 border-b border-[var(--border)] pb-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-base font-bold">{decodedSymbol}</h1>
+          <span className="text-xs text-[var(--text-muted)]">{pair.category}</span>
+        </div>
+        <div className="mt-1 flex gap-4 text-xs text-[var(--text-muted)]">
+          <span>
+            price <span className="text-[var(--text-secondary)]">${pair.current_price ?? "—"}</span>
+          </span>
+          <span>
+            24h vol{" "}
+            <span className="text-[var(--text-secondary)]">
+              ${pair.volume_24h ? Number(pair.volume_24h).toLocaleString() : "—"}
+            </span>
+          </span>
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-4 gap-4">
-        <StatCard label="Total Signals" value={pairSignals.length.toString()} />
-        <StatCard label="Total Trades" value={pairTrades.length.toString()} />
-        <StatCard
-          label="Win Rate"
+      {/* Stats */}
+      <div className="mb-6 grid grid-cols-4 gap-px overflow-hidden rounded border border-[var(--border)] bg-[var(--border)]">
+        <StatCell label="signals" value={pairSignals.length.toString()} />
+        <StatCell label="trades" value={pairTrades.length.toString()} />
+        <StatCell
+          label="win rate"
           value={`${(winRate * 100).toFixed(1)}%`}
+          valueColor={winRate >= 0.5 ? "var(--accent-green)" : "var(--accent-red)"}
         />
-        <StatCard
-          label="P&L"
-          value={`$${totalPnl.toFixed(2)}`}
-          color={totalPnl >= 0 ? "var(--accent-green)" : "var(--accent-red)"}
+        <StatCell
+          label="p&l"
+          value={`${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)}`}
+          valueColor={totalPnl >= 0 ? "var(--accent-green)" : "var(--accent-red)"}
         />
       </div>
 
-      <div className="space-y-6">
-        <section>
-          <h2 className="mb-3 text-lg font-bold">Signal History</h2>
-          {pairSignals.length === 0 && (
-            <p className="text-sm text-[var(--text-secondary)]">No signals for this pair.</p>
-          )}
-          <div className="space-y-2">
-            {pairSignals.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--bg-card)] p-3 text-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`rounded px-2 py-0.5 text-xs font-bold ${
-                      s.direction === "LONG"
-                        ? "bg-green-500/20 text-green-400"
-                        : "bg-red-500/20 text-red-400"
-                    }`}
-                  >
-                    {s.direction}
-                  </span>
-                  <span>{s.strategy}</span>
-                  <span className="text-[var(--text-secondary)]">{s.timeframe}</span>
-                </div>
-                <div className="flex gap-4 text-xs text-[var(--text-secondary)]">
-                  <span>Conf: {(s.confidence * 100).toFixed(0)}%</span>
-                  <span>Status: {s.status}</span>
-                  <span>{new Date(s.created_at).toLocaleString()}</span>
-                </div>
+      {/* Signal history */}
+      <div>
+        <div className="mb-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+          Signal History
+        </div>
+
+        {pairSignals.length === 0 && (
+          <p className="text-xs text-[var(--text-muted)]">no signals for this pair</p>
+        )}
+
+        <div className="space-y-px">
+          {pairSignals.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-xs"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className={`w-12 font-bold ${
+                    s.direction === "LONG" ? "text-[var(--accent-green)]" : "text-[var(--accent-red)]"
+                  }`}
+                >
+                  {s.direction}
+                </span>
+                <span className="text-[var(--text-secondary)]">{s.strategy.replace(/_/g, " ")}</span>
+                <span className="text-[var(--text-muted)]">{s.timeframe}</span>
               </div>
-            ))}
-          </div>
-        </section>
+              <div className="flex gap-3 text-[11px] text-[var(--text-muted)]">
+                <span>
+                  conf <span className="text-[var(--text-secondary)]">{(s.confidence * 100).toFixed(0)}%</span>
+                </span>
+                <span className={
+                  s.status === "won" ? "font-bold text-[var(--accent-green)]"
+                    : s.status === "lost" || s.status === "stopped" ? "font-bold text-[var(--accent-red)]"
+                      : "text-[var(--text-muted)]"
+                }>
+                  {s.status}
+                </span>
+                <span>{new Date(s.created_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </main>
   );
 }
 
-function StatCard({
+function StatCell({
   label,
   value,
-  color,
+  valueColor,
 }: {
   label: string;
   value: string;
-  color?: string;
+  valueColor?: string;
 }) {
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-center">
-      <div className="text-xs uppercase text-[var(--text-secondary)]">{label}</div>
-      <div className="mt-1 text-xl font-bold" style={color ? { color } : undefined}>
+    <div className="bg-[var(--bg-secondary)] px-4 py-3">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
+      <div
+        className="mt-0.5 text-sm font-bold"
+        style={valueColor ? { color: valueColor } : undefined}
+      >
         {value}
       </div>
     </div>

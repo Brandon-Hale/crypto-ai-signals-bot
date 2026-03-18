@@ -91,7 +91,7 @@ class VolumeSpikeStrategy(BaseStrategy):
 
         if not response or response.direction == "NONE":
             return None
-        if response.confidence < 0.60:
+        if response.confidence < app_settings.bot_min_confidence:
             return None
 
         atr = ind.atr_14

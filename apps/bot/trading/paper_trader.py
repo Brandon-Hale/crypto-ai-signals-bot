@@ -27,14 +27,14 @@ class PaperTrader(BaseTrader):
     def mode(self) -> str:
         return "paper"
 
-    async def open_trade(self, signal: Signal) -> TradeResult:
+    async def open_trade(self, signal: Signal) -> TradeResult | None:
         """Open a paper trade at current market price."""
         if not signal.id or not signal.pair_id:
-            logger.warning(f"Cannot open trade: missing signal.id or signal.pair_id (signal={signal})")
+            logger.warning(f"Cannot open trade: missing signal.id or signal.pair_id")
             return None
-    
-        # Use live price from Redis, not signal price (avoids look-ahead bias)
-        price_str = await self.redis.hget("pairs:prices", signal.pair_id)
+
+        # Use live price from Redis by pair UUID, not signal price (avoids look-ahead bias)
+        price_str = await self.redis.hget("pairs:prices_by_id", signal.pair_id)
         entry_price = float(price_str) if price_str else signal.entry_price
 
         trade_data = {
@@ -67,7 +67,7 @@ class PaperTrader(BaseTrader):
         )
 
         logger.info(
-            f"Paper trade opened: {signal.direction} {signal.pair_id} "
+            f"Paper trade opened: {signal.direction} {signal.symbol or signal.pair_id} "
             f"@ {entry_price} | size=${self.trade_size}"
         )
         return trade
@@ -101,6 +101,13 @@ class PaperTrader(BaseTrader):
             "closed_at": datetime.now(timezone.utc).isoformat(),
         }
         await self.supabase.update("trades", trade_id, update)
+
+        # Update paper equity in Redis
+        equity_str = await self.redis.get("bot:paper:equity")
+        current_equity = float(equity_str) if equity_str else 10000.0
+        new_equity = current_equity + pnl_usd
+        await self.redis.set("bot:paper:equity", str(round(new_equity, 2)))
+        logger.debug(f"Paper equity updated: ${current_equity:.2f} → ${new_equity:.2f} ({pnl_usd:+.2f})")
 
         # Update signal status
         signal_id = trade_data.get("signal_id")

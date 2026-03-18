@@ -3,8 +3,7 @@
 from loguru import logger
 
 from config import settings as app_settings
-from indicators.technical import compute_indicators
-from models.market import Pair
+from models.market import Pair, TechnicalIndicators
 from models.signal import Signal
 from strategies.base import BaseStrategy
 
@@ -15,7 +14,7 @@ class TechnicalConfluenceStrategy(BaseStrategy):
     name = "technical_confluence"
 
     async def evaluate(self, pair: Pair) -> Signal | None:
-        """Evaluate confluence on both 1h and 4h timeframes."""
+        """Evaluate confluence on both 4h and 1h timeframes."""
         for timeframe in ("4h", "1h"):
             signal = await self._evaluate_timeframe(pair, timeframe)
             if signal:
@@ -25,29 +24,40 @@ class TechnicalConfluenceStrategy(BaseStrategy):
     async def _evaluate_timeframe(self, pair: Pair, timeframe: str) -> Signal | None:
         symbol = pair.symbol
 
-        ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
-        if not ohlcv or len(ohlcv) < 50:
+        # 1. Early dedup check — before any data fetching
+        # Check both directions; if both deduped, skip entirely
+        long_deduped = await self.is_deduped(symbol, "LONG")
+        short_deduped = await self.is_deduped(symbol, "SHORT")
+        if long_deduped and short_deduped:
             return None
 
-        ind = compute_indicators(ohlcv)
-        current_price = ohlcv[-1].close
+        # 2. Get pre-computed indicators from cache
+        ind = await self.get_cached_indicators(symbol, timeframe)
+        if not ind:
+            return None
 
-        # Score LONG conditions
+        current_price = float(pair.current_price) if pair.current_price else 0
+        if current_price <= 0:
+            return None
+
+        # 3. Score conditions — pure math, no API calls
         long_score, long_conditions = self._score_long(ind, current_price)
         short_score, short_conditions = self._score_short(ind, current_price)
 
-        # Pick the stronger direction
-        if long_score >= 4:
+        # Pick the stronger direction (require >= 4/6 confluence)
+        if long_score >= 4 and not long_deduped:
             score, conditions, direction = long_score, long_conditions, "LONG"
-        elif short_score >= 4:
+        elif short_score >= 4 and not short_deduped:
             score, conditions, direction = short_score, short_conditions, "SHORT"
         else:
             return None
 
-        if await self.is_deduped(symbol, direction):
+        # 4. Require >= 5/6 confluence to call Claude (saves ~30% of calls)
+        if score < 5:
+            logger.debug(f"{symbol} {timeframe}: Confluence {score}/6 — below Claude threshold")
             return None
 
-        # Ask Claude to assess setup quality
+        # 5. Ask Claude to assess setup quality
         response = await self.claude.analyse_technical_confluence(
             symbol=symbol,
             current_price=current_price,
@@ -63,23 +73,14 @@ class TechnicalConfluenceStrategy(BaseStrategy):
         if response.confidence < app_settings.bot_min_confidence:
             return None
 
-        atr = ind.atr_14
-        stop_mult = response.suggested_stop_atr_mult or app_settings.bot_default_stop_atr_mult
-        target_mult = response.suggested_target_atr_mult or app_settings.bot_default_target_atr_mult
-
-        if response.direction == "LONG":
-            stop_price = current_price - (atr * stop_mult)
-            target_price = current_price + (atr * target_mult)
-        else:
-            stop_price = current_price + (atr * stop_mult)
-            target_price = current_price - (atr * target_mult)
-
-        stop_dist = abs(current_price - stop_price)
-        target_dist = abs(target_price - current_price)
-        risk_reward = target_dist / stop_dist if stop_dist > 0 else 0
-
-        if risk_reward < app_settings.bot_min_rr:
+        # 6. Calculate stop/target
+        result = self.calculate_stop_target(
+            current_price, ind.atr_14, response.direction,
+            response.suggested_stop_atr_mult, response.suggested_target_atr_mult,
+        )
+        if not result:
             return None
+        stop_price, target_price, risk_reward = result
 
         await self.set_dedup(symbol, response.direction)
 
@@ -91,7 +92,7 @@ class TechnicalConfluenceStrategy(BaseStrategy):
             entry_price=current_price,
             target_price=target_price,
             stop_price=stop_price,
-            risk_reward=round(risk_reward, 3),
+            risk_reward=risk_reward,
             timeframe=timeframe,
             reasoning=response.reasoning,
             indicators=ind.model_dump(),
@@ -109,7 +110,7 @@ class TechnicalConfluenceStrategy(BaseStrategy):
         return signal
 
     def _score_long(
-        self, ind: "TechnicalIndicators", price: float
+        self, ind: TechnicalIndicators, price: float
     ) -> tuple[int, list[str]]:
         score = 0
         conditions: list[str] = []
@@ -138,7 +139,7 @@ class TechnicalConfluenceStrategy(BaseStrategy):
         return score, conditions
 
     def _score_short(
-        self, ind: "TechnicalIndicators", price: float
+        self, ind: TechnicalIndicators, price: float
     ) -> tuple[int, list[str]]:
         score = 0
         conditions: list[str] = []

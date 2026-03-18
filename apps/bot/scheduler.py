@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+import signal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -78,6 +79,7 @@ class StrategyScheduler:
     async def strategy_loop(self) -> None:
         """Main strategy loop — runs every N minutes."""
         try:
+            self.redis.reset_loop_counter()
             await self.redis.set("bot:status", "running")
             logger.info("Strategy loop starting")
 
@@ -181,10 +183,8 @@ class StrategyScheduler:
     async def _update_redis_prices(self, pairs: list[Pair]) -> None:
         """Write current prices to Redis hash."""
         for pair in pairs:
-            if pair.current_price:
-                await self.redis.hset(
-                    "pairs:prices", pair.symbol, str(pair.current_price)
-                )
+            if pair.current_price is not None:
+                await self.redis.hset("pairs:prices", pair.symbol, str(pair.current_price))
 
     async def _snapshot_ohlcv(self, pairs: list[Pair]) -> None:
         """Store latest candles in Supabase for charting."""
@@ -214,13 +214,22 @@ class StrategyScheduler:
                 try:
                     signal = await strategy.evaluate(pair)
                     if signal:
-                        # Write signal to Supabase
-                        signal_data = signal.model_dump(exclude={"id", "created_at"})
+                        # Ensure pair_id is set
+                        signal.pair_id = signal.pair_id or pair.symbol
+
+                        # Prepare data for Supabase: exclude id, created_at, and None values only
+                        signal_data = {
+                            k: v
+                            for k, v in signal.model_dump().items()
+                            if k not in {"id", "created_at"} and v is not None
+                        }
+
                         result = await self.supabase.insert("signals", signal_data)
-                        if result:
+                        if result and "id" in result:
                             signal.id = result["id"]
-                            # Execute trade
                             await self.trader.open_trade(signal)
+                        else:
+                            logger.error(f"Failed to insert signal for {pair.symbol}")
                 except Exception as e:
                     logger.error(
                         f"Strategy {strategy.name} failed for {pair.symbol}: {e}"

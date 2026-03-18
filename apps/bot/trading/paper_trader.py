@@ -29,6 +29,10 @@ class PaperTrader(BaseTrader):
 
     async def open_trade(self, signal: Signal) -> TradeResult:
         """Open a paper trade at current market price."""
+        if not signal.id or not signal.pair_id:
+            logger.warning(f"Cannot open trade: missing signal.id or signal.pair_id (signal={signal})")
+            return None
+    
         # Use live price from Redis, not signal price (avoids look-ahead bias)
         price_str = await self.redis.hget("pairs:prices", signal.pair_id)
         entry_price = float(price_str) if price_str else signal.entry_price
@@ -51,7 +55,7 @@ class PaperTrader(BaseTrader):
 
         trade = TradeResult(
             id=trade_id,
-            signal_id=signal.id or "",
+            signal_id=signal.id,
             pair_id=signal.pair_id,
             mode="paper",
             direction=signal.direction,

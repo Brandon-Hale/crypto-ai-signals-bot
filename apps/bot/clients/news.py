@@ -14,7 +14,7 @@ from models.news import NewsArticle
 class NewsClient:
     """Fetches crypto news from CryptoPanic with NewsAPI as fallback."""
 
-    CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/"
+    CRYPTOPANIC_URL = "https://cryptopanic.com/api/developer/v2/posts/"
     NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
     def __init__(self, settings: Settings, redis: RedisClient) -> None:

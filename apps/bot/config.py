@@ -1,14 +1,14 @@
 """Bot configuration via pydantic-settings. All values loaded from environment variables."""
 
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
-
 
 class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
     # Core APIs
     anthropic_api_key: str
-    supabase_url: str
+    supabase_url: str = Field(alias="NEXT_PUBLIC_SUPABASE_URL")
     supabase_service_key: str
     upstash_redis_rest_url: str
     upstash_redis_rest_token: str
@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     bot_default_stop_atr_mult: float = 1.5
     bot_default_target_atr_mult: float = 2.5
     log_level: str = "INFO"
+
+    # Cost controls
+    bot_max_claude_calls_per_hour: int = 60      # hard cap on Claude API calls per hour
+    bot_max_claude_calls_per_day: int = 500       # hard cap on Claude API calls per day
+    bot_max_redis_commands_per_loop: int = 500    # circuit breaker per strategy loop
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

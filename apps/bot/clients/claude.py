@@ -1,6 +1,7 @@
-"""Anthropic Claude client for AI signal generation."""
+"""Anthropic Claude client for AI signal generation with rate limiting."""
 
 import json
+from datetime import datetime, timezone
 
 import anthropic
 from loguru import logger
@@ -16,6 +17,37 @@ class ClaudeClient:
 
     def __init__(self) -> None:
         self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self._hourly_calls: int = 0
+        self._daily_calls: int = 0
+        self._current_hour: int = datetime.now(timezone.utc).hour
+        self._current_day: int = datetime.now(timezone.utc).day
+
+    def _check_and_reset_counters(self) -> None:
+        """Reset counters on hour/day rollover."""
+        now = datetime.now(timezone.utc)
+        if now.day != self._current_day:
+            self._daily_calls = 0
+            self._hourly_calls = 0
+            self._current_day = now.day
+            self._current_hour = now.hour
+        elif now.hour != self._current_hour:
+            self._hourly_calls = 0
+            self._current_hour = now.hour
+
+    def _is_rate_limited(self) -> bool:
+        """Check if we've hit the hourly or daily Claude call limit."""
+        self._check_and_reset_counters()
+        if self._hourly_calls >= settings.bot_max_claude_calls_per_hour:
+            logger.warning(
+                f"Claude hourly limit reached: {self._hourly_calls}/{settings.bot_max_claude_calls_per_hour}"
+            )
+            return True
+        if self._daily_calls >= settings.bot_max_claude_calls_per_day:
+            logger.warning(
+                f"Claude daily limit reached: {self._daily_calls}/{settings.bot_max_claude_calls_per_day}"
+            )
+            return True
+        return False
 
     async def analyse_news_sentiment(
         self,
@@ -215,6 +247,9 @@ Respond with this exact JSON schema and nothing else:
         self, system_prompt: str, user_prompt: str
     ) -> ClaudeSignalResponse | None:
         """Send a prompt to Claude and parse the JSON response."""
+        if self._is_rate_limited():
+            return None
+
         try:
             response = await self.client.messages.create(
                 model=self.MODEL,
@@ -222,7 +257,18 @@ Respond with this exact JSON schema and nothing else:
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
-            text = response.content[0].text.strip()
+            self._hourly_calls += 1
+            self._daily_calls += 1
+            logger.debug(
+                f"Claude call #{self._daily_calls} today "
+                f"(#{self._hourly_calls} this hour)"
+            )
+            if not response.content or not response.content[0].text:
+                logger.error("Claude returned empty response")
+                return None
+            text = response.content[0].text
+            text = text.strip()
+            logger.debug(f"Raw Claude response: {text}")
             data = json.loads(text)
             return ClaudeSignalResponse(**data)
         except json.JSONDecodeError as e:
